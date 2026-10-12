@@ -1,80 +1,68 @@
 from flask import Flask, request, jsonify
-from telethon import TelegramClient, functions, types
+from telethon import TelegramClient, types
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import GetFullChatRequest
+from telethon.tl.types import ChannelParticipantsAdmins
 import asyncio
 import os
 import time
 import random
 import requests
-import uuid
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
 # ============================================
-# TELEGRAM CONFIG
+# CONFIG
 # ============================================
-API_ID = int(os.environ.get('API_ID', '36879151'))
-API_HASH = os.environ.get('API_HASH', '45360a236343352099ffa29570f48700')
-SESSION_STRING = os.environ.get('SESSION_STRING', '1BVtsOMQBu8B5k-vpEYTBDBxXX20SdK8kApAbT08lt4vzuQIIqsycH00oxKNPZGOc7HcAje_4qUF5Kk6FQ0JGMqjH9LdThnlXrVwxO98Z7gjM0w874HVa6U3Y8LCBLu2SpbifYQ7K4MIe3Li-BVtcQr9YNRJTkW12WWOuetNloXWIiAq51TOn3kTADJM_59k8E2bCO2i_nYxGKFfjzS7zm36s0pxckPdXBqft69GrTRXkkFuwabix3LSmYjoc0HB9_Zsuzxp0qwkZViMFCay68tdxFS57peSLSXnCSXpiwkjXAtc3dNnPJUqyYqC2khHdrqVz9HiWRCoUf5Zu6IcFedVS1BWaMC4=')
+API_ID = int(os.environ.get('API_ID', '36879101'))
+API_HASH = os.environ.get('API_HASH', '45360a236343352099ffa29570f486000')
+SESSION_STRING = os.environ.get('SESSION_STRING', '800sOMQBu8B5k-vpEYTBDBxXX20SdK8kApAbT08lt4vzuQIIqsycH00oxKNPZGOc7HcAje_4qUF5Kk6FQ0JGMqjH9LdThnlXrVwxO98Z7gjM0w874HVa6U3Y8LCBLu2SpbifYQ7K4MIe3Li-BVtcQr9YNRJTkW12WWOuetNloXWIiAq51TOn3kTADJM_59k8E2bCO2i_nYxGKFfjzS7zm36s0pxckPdXBqft69GrTRXkkFuwabix3LSmYjoc0HB9_Zsuzxp0qwkZViMFCay68tdxFS57peSLSXnCSXpiwkjXAtc3dNnPJUqyYqC2khHdrqVz9HiWRCoUf5Zu6IcFedVS1BWaMC4=')
 
 # ============================================
-# PROXY SYSTEM
+# PROXY
 # ============================================
 proxy_pool = []
 proxy_last_fetch = 0
-PROXY_CACHE_TIME = 300
 
-def fetch_live_proxies():
+def fetch_proxies():
     global proxy_pool, proxy_last_fetch
-    if time.time() - proxy_last_fetch < PROXY_CACHE_TIME and proxy_pool:
+    if time.time() - proxy_last_fetch < 300 and proxy_pool:
         return proxy_pool
-    
     proxies = []
-    sources = [
-        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=all&anonymity=all",
-        "https://www.proxy-list.download/api/v1/get?type=http",
-    ]
-    for url in sources:
-        try:
-            r = requests.get(url, timeout=5)
-            if r.status_code == 200:
-                for line in r.text.strip().split('\n'):
-                    line = line.strip()
-                    if line and ':' in line:
-                        proxies.append(line)
-        except:
-            pass
-    
+    try:
+        r = requests.get("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000", timeout=5)
+        if r.status_code == 200:
+            for line in r.text.strip().split('\n'):
+                line = line.strip()
+                if line and ':' in line:
+                    proxies.append(line)
+    except:
+        pass
     proxies = list(set(proxies))
     if proxies:
         proxy_pool = proxies
         proxy_last_fetch = time.time()
     return proxy_pool
 
-def get_random_proxy():
-    proxies = fetch_live_proxies()
-    return random.choice(proxies) if proxies else None
-
 # ============================================
-# CACHE SYSTEM
+# CACHE
 # ============================================
 cache = {}
-CACHE_TTL = 3600  # 1 hour (info changes fast)
+CACHE_TTL = 1800
 
 def get_cached(key):
     if key in cache:
-        result, timestamp = cache[key]
-        if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
-            return result
+        r, t = cache[key]
+        if datetime.now() - t < timedelta(seconds=CACHE_TTL):
+            return r
     return None
 
-def set_cached(key, result):
-    cache[key] = (result, datetime.now())
+def set_cached(key, val):
+    cache[key] = (val, datetime.now())
 
 # ============================================
 # TELEGRAM CLIENT
@@ -84,18 +72,16 @@ asyncio.set_event_loop(loop)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH, loop=loop)
 
 # ============================================
-# HELPER FUNCTIONS
+# HELPERS
 # ============================================
-def safe_get(obj, attr, default=None):
-    """Safely get attribute"""
+def sg(obj, attr, default=None):
     try:
-        val = getattr(obj, attr, default)
-        return val if val is not None else default
+        v = getattr(obj, attr, default)
+        return v if v is not None else default
     except:
         return default
 
-def format_date(dt):
-    """Format datetime to string"""
+def fmt_date(dt):
     if dt is None:
         return None
     try:
@@ -103,421 +89,666 @@ def format_date(dt):
     except:
         return str(dt)
 
-async def get_entity_with_retry(identifier, retry_count=0):
+def human_time(dt):
+    """Convert to human readable time"""
+    if not dt:
+        return None
+    try:
+        diff = datetime.now(dt.tzinfo) - dt
+        secs = int(diff.total_seconds())
+        if secs < 60: return f"{secs}s ago"
+        if secs < 3600: return f"{secs//60}m ago"
+        if secs < 86400: return f"{secs//3600}h ago"
+        if secs < 604800: return f"{secs//86400}d ago"
+        if secs < 2592000: return f"{secs//604800}w ago"
+        if secs < 31536000: return f"{secs//2592000}mo ago"
+        return f"{secs//31536000}y ago"
+    except:
+        return None
+
+async def get_entity(identifier, retry=0):
     await client.connect()
     if not await client.is_user_authorized():
-        raise Exception("Client not authorized")
-    
+        raise Exception("Not authorized")
     try:
         if identifier.startswith('@'):
-            e = await client.get_entity(identifier)
+            return await client.get_entity(identifier)
         elif identifier.lstrip('-').isdigit():
-            e = await client.get_entity(int(identifier))
+            return await client.get_entity(int(identifier))
         else:
-            e = await client.get_entity(f"@{identifier}")
-        return e
+            return await client.get_entity(f"@{identifier}")
     except FloodWaitError as e:
-        if retry_count < 2 and e.seconds <= 30:
+        if retry < 2 and e.seconds <= 30:
             await asyncio.sleep(e.seconds)
-            return await get_entity_with_retry(identifier, retry_count + 1)
+            return await get_entity(identifier, retry + 1)
         raise Exception(f"Flood wait: {e.seconds}s")
 
 # ============================================
-# MAIN INFO EXTRACTOR - 20+ FIELDS
+# 🧠 INTELLIGENCE ENGINE
 # ============================================
-async def get_full_info(identifier):
-    """Extract 20+ real info about user/channel/group"""
-    entity = await get_entity_with_retry(identifier)
+
+def intel_online_status(entity):
+    """Advanced online status with intel"""
+    status = sg(entity, 'status')
+    if not status:
+        return {
+            "status": "⚪ Unknown",
+            "last_seen": "No data available",
+            "privacy": "hidden"
+        }
     
-    info = {
-        "status": "success",
-        "credit": "@BRONX_ULTRA",
-        "query": identifier,
-        "extracted_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+    t = type(status).__name__
+    
+    if t == "UserStatusOnline":
+        return {
+            "status": "🟢 Online Now",
+            "last_seen": "Active right now",
+            "privacy": "public"
+        }
+    
+    if t == "UserStatusOffline":
+        wo = sg(status, 'was_online')
+        return {
+            "status": "🔴 Offline",
+            "last_seen": human_time(wo),
+            "exact_time": fmt_date(wo),
+            "privacy": "public"
+        }
+    
+    if t == "UserStatusRecently":
+        return {
+            "status": "🟡 Recently Active",
+            "last_seen": "Within last 2 days",
+            "privacy": "recently"
+        }
+    
+    if t == "UserStatusLastWeek":
+        return {
+            "status": "🟠 Last Week",
+            "last_seen": "Within 7 days",
+            "privacy": "week"
+        }
+    
+    if t == "UserStatusLastMonth":
+        return {
+            "status": "⚫ Last Month",
+            "last_seen": "Within 30 days",
+            "privacy": "month"
+        }
+    
+    if t == "UserStatusEmpty":
+        return {
+            "status": "❓ Hidden",
+            "last_seen": "Privacy restricted",
+            "privacy": "hidden"
+        }
+    
+    return {"status": "⚪ Unknown", "last_seen": str(status), "privacy": "unknown"}
+
+
+def intel_account_type(entity, info):
+    """Detect account nature"""
+    flags = []
+    
+    if sg(entity, 'bot'): flags.append("🤖 Bot")
+    if sg(entity, 'premium'): flags.append("💎 Premium")
+    if sg(entity, 'verified'): flags.append("✅ Verified")
+    if sg(entity, 'scam'): flags.append("🚨 Scam")
+    if sg(entity, 'fake'): flags.append("⚠️ Fake")
+    if sg(entity, 'deleted'): flags.append("💀 Deleted")
+    if sg(entity, 'restricted'): flags.append("🔒 Restricted")
+    if sg(entity, 'support'): flags.append("🛡️ Support")
+    if sg(entity, 'contact'): flags.append("📇 Contact")
+    if sg(entity, 'mutual_contact'): flags.append("🤝 Mutual")
+    if sg(entity, 'close_friend'): flags.append("💚 Close Friend")
+    
+    # Determine primary type
+    if sg(entity, 'bot'): primary = "Bot Account"
+    elif sg(entity, 'deleted'): primary = "Deleted Account"
+    elif sg(entity, 'scam'): primary = "Scam Account"
+    elif sg(entity, 'fake'): primary = "Fake Account"
+    elif sg(entity, 'verified'): primary = "Verified Account"
+    elif sg(entity, 'premium'): primary = "Premium User"
+    else: primary = "Regular User"
+    
+    return {"primary_type": primary, "badges": flags}
+
+
+def intel_identity_strength(entity, info):
+    """Analyze how strong/complete the identity is"""
+    score = 0
+    checks = []
+    
+    # Name
+    fn = sg(entity, 'first_name', '') or ''
+    ln = sg(entity, 'last_name', '') or ''
+    if fn and ln:
+        score += 20; checks.append("full_name")
+    elif fn:
+        score += 10; checks.append("partial_name")
+    
+    # Username
+    if sg(entity, 'username'):
+        score += 20; checks.append("username")
+    
+    # Photo
+    if info.get("photo", {}).get("count", 0) > 0:
+        score += 15; checks.append("has_photo")
+        if info["photo"]["count"] >= 3:
+            score += 5; checks.append("multiple_photos")
+    
+    # Bio
+    if info.get("bio"):
+        score += 15; checks.append("has_bio")
+        if len(info["bio"]) >= 30:
+            score += 5; checks.append("detailed_bio")
+    
+    # Verified/Premium
+    if sg(entity, 'verified'): score += 10; checks.append("verified")
+    if sg(entity, 'premium'): score += 10; checks.append("premium")
+    
+    return {
+        "score": min(100, score),
+        "level": "Strong" if score >= 70 else "Medium" if score >= 40 else "Weak",
+        "checks_passed": checks
+    }
+
+
+def intel_trust_score(entity, info):
+    """Calculate trust/risk score"""
+    score = 50  # neutral
+    factors = []
+    
+    # Positive
+    if sg(entity, 'verified'): score += 25; factors.append("+25 Verified")
+    if sg(entity, 'premium'): score += 10; factors.append("+10 Premium")
+    if info.get("identity_strength", {}).get("score", 0) >= 70:
+        score += 15; factors.append("+15 Strong identity")
+    if sg(entity, 'username'): score += 5; factors.append("+5 Has username")
+    
+    # Negative
+    if sg(entity, 'scam'): score -= 40; factors.append("-40 Marked Scam")
+    if sg(entity, 'fake'): score -= 30; factors.append("-30 Marked Fake")
+    if sg(entity, 'deleted'): score -= 50; factors.append("-50 Deleted")
+    if sg(entity, 'restricted'): score -= 20; factors.append("-20 Restricted")
+    if not info.get("photo", {}).get("count"): 
+        score -= 5; factors.append("-5 No photo")
+    if not sg(entity, 'username'): 
+        score -= 5; factors.append("-5 No username")
+    
+    score = max(0, min(100, score))
+    
+    if score >= 80: level, emoji = "Highly Trusted", "💎"
+    elif score >= 60: level, emoji = "Trusted", "✅"
+    elif score >= 40: level, emoji = "Neutral", "⚖️"
+    elif score >= 20: level, emoji = "Suspicious", "⚠️"
+    else: level, emoji = "Dangerous", "🚨"
+    
+    return {
+        "score": f"{score}/100",
+        "level": level,
+        "emoji": emoji,
+        "factors": factors
+    }
+
+
+def intel_activity_pattern(entity, info):
+    """Analyze activity patterns"""
+    activity = info.get("online_status", {})
+    account_age = info.get("account_age_days")
+    
+    if activity.get("status") == "🟢 Online Now":
+        pattern = "🔥 Highly Active"
+        engagement = "Very High"
+    elif activity.get("status") == "🟡 Recently Active":
+        pattern = "✅ Active"
+        engagement = "High"
+    elif activity.get("status") == "🟠 Last Week":
+        pattern = "📅 Moderately Active"
+        engagement = "Medium"
+    elif activity.get("status") == "⚫ Last Month":
+        pattern = "💤 Low Activity"
+        engagement = "Low"
+    elif activity.get("status") == "❓ Hidden":
+        pattern = "🕵️ Privacy Hidden"
+        engagement = "Unknown"
+    else:
+        pattern = "❓ Unknown"
+        engagement = "Unknown"
+    
+    return {
+        "pattern": pattern,
+        "engagement_level": engagement,
+        "account_age": f"{account_age} days" if account_age else None
+    }
+
+
+def intel_quality_report(entity, info):
+    """High quality analysis report"""
+    points = []
+    score = 0
+    
+    # Name quality
+    fn = sg(entity, 'first_name', '') or ''
+    ln = sg(entity, 'last_name', '') or ''
+    full = f"{fn} {ln}".strip()
+    
+    if fn and len(fn) >= 2:
+        score += 15; points.append("✓ Proper first name")
+    if ln:
+        score += 10; points.append("✓ Full name provided")
+    
+    # Username quality
+    uname = sg(entity, 'username')
+    if uname:
+        score += 15; points.append(f"✓ Username: @{uname}")
+        if len(uname) >= 5 and not uname.isdigit():
+            score += 5; points.append("✓ Quality username length")
+    
+    # Photo
+    pc = info.get("photo", {}).get("count", 0)
+    if pc > 0:
+        score += 15; points.append(f"✓ Profile photo ({pc})")
+    
+    # Bio
+    bio = info.get("bio", "")
+    if len(bio) >= 30:
+        score += 15; points.append(f"✓ Detailed bio ({len(bio)} chars)")
+    elif bio:
+        score += 8; points.append(f"✓ Has bio ({len(bio)} chars)")
+    
+    # Badges
+    if sg(entity, 'verified'): score += 10; points.append("✓ Verified")
+    if sg(entity, 'premium'): score += 7; points.append("✓ Premium")
+    
+    # Common chats
+    cc = info.get("common_chats", 0)
+    if cc > 0:
+        score += 5; points.append(f"✓ {cc} common chats")
+    
+    score = max(0, min(100, score))
+    
+    if score >= 80: rating, emoji = "Elite Profile", "💎"
+    elif score >= 60: rating, emoji = "High Quality", "⭐"
+    elif score >= 40: rating, emoji = "Decent", "✅"
+    elif score >= 20: rating, emoji = "Basic", "⚠️"
+    else: rating, emoji = "Poor/Suspicious", "🚨"
+    
+    return {
+        "score": f"{score}/100",
+        "rating": rating,
+        "emoji": emoji,
+        "points": points
+    }
+
+
+async def intel_photo_data(entity):
+    """Extract photo metadata"""
+    result = {"count": 0, "latest": None, "oldest": None}
+    try:
+        photos = await client.get_profile_photos(entity, limit=20)
+        result["count"] = len(photos)
+        if photos:
+            latest = photos[0]
+            oldest = photos[-1]
+            result["latest"] = {
+                "id": latest.id,
+                "date": fmt_date(sg(latest, 'date')),
+                "dc_id": sg(latest, 'dc_id')
+            }
+            result["oldest"] = {
+                "id": oldest.id,
+                "date": fmt_date(sg(oldest, 'date'))
+            }
+    except:
+        pass
+    return result
+
+
+def intel_restrictions(entity):
+    """Get all restrictions with details"""
+    restr = []
+    
+    if sg(entity, 'restricted'):
+        reasons = sg(entity, 'restriction_reason', []) or []
+        for r in reasons:
+            restr.append({
+                "type": sg(r, 'platform', 'restricted'),
+                "reason": sg(r, 'reason', 'N/A'),
+                "text": sg(r, 'text', 'N/A')
+            })
+    
+    if sg(entity, 'scam'): restr.append({"type": "flag", "reason": "Marked as scam"})
+    if sg(entity, 'fake'): restr.append({"type": "flag", "reason": "Marked as fake"})
+    if sg(entity, 'deleted'): restr.append({"type": "status", "reason": "Account deleted"})
+    
+    # Channel/Group specific
+    if sg(entity, 'noforwards'): restr.append({"type": "setting", "reason": "Forwarding disabled"})
+    if sg(entity, 'join_request'): restr.append({"type": "setting", "reason": "Join request required"})
+    if sg(entity, 'slowmode_enabled'):
+        restr.append({"type": "setting", "reason": f"Slowmode: {sg(entity, 'slowmode_seconds', 0)}s"})
+    if sg(entity, 'participants_hidden'): restr.append({"type": "setting", "reason": "Members hidden"})
+    if sg(entity, 'pre_history_hidden'): restr.append({"type": "setting", "reason": "History hidden"})
+    
+    return restr if restr else "None"
+
+
+async def intel_admins(entity, limit=15):
+    """Get admins with roles"""
+    result = []
+    try:
+        if isinstance(entity, types.Channel):
+            admins = await client.get_participants(entity, filter=ChannelParticipantsAdmins, limit=limit)
+            for a in admins:
+                try:
+                    p = await client.get_permissions(entity, a)
+                    role = "Owner" if getattr(p, 'is_creator', False) else "Admin"
+                    rights = []
+                    if getattr(p, 'delete_messages', False): rights.append("delete")
+                    if getattr(p, 'ban_users', False): rights.append("ban")
+                    if getattr(p, 'invite_users', False): rights.append("invite")
+                    if getattr(p, 'pin_messages', False): rights.append("pin")
+                    if getattr(p, 'add_admins', False): rights.append("add_admins")
+                    
+                    result.append({
+                        "id": a.id,
+                        "username": sg(a, 'username'),
+                        "name": f"{sg(a, 'first_name', '')} {sg(a, 'last_name', '')}".strip(),
+                        "role": role,
+                        "is_bot": sg(a, 'bot', False),
+                        "rights": rights
+                    })
+                except:
+                    result.append({
+                        "id": a.id,
+                        "username": sg(a, 'username'),
+                        "name": f"{sg(a, 'first_name', '')} {sg(a, 'last_name', '')}".strip()
+                    })
+    except:
+        pass
+    return result
+
+
+# ============================================
+# 🎯 MAIN EXTRACTOR
+# ============================================
+async def extract_intel(identifier):
+    entity = await get_entity(identifier)
+    
+    is_user = isinstance(entity, types.User)
+    is_channel = isinstance(entity, types.Channel)
+    is_group = isinstance(entity, types.Chat)
+    
+    # Build core info first (needed for analyzers)
+    core = {
+        "type": "user" if is_user else ("channel" if sg(entity, 'broadcast') else "supergroup") if is_channel else "group",
+        "bio": "",
+        "common_chats": 0,
+        "account_age_days": None
     }
     
-    # ===== BASIC INFO =====
-    info["chat_id"] = entity.id
-    info["access_hash"] = safe_get(entity, 'access_hash')
-    info["username"] = safe_get(entity, 'username')
-    info["usernames"] = []
+    # Full entity fetch
+    full_entity = None
+    try:
+        if is_user:
+            full_entity = (await client(GetFullUserRequest(entity))).full_user
+            core["bio"] = sg(full_entity, 'about', '')
+            core["common_chats"] = sg(full_entity, 'common_chats_count', 0)
+        elif is_channel:
+            full_entity = (await client(GetFullChannelRequest(entity))).full_chat
+            core["bio"] = sg(full_entity, 'about', '')
+        elif is_group:
+            full_entity = (await client(GetFullChatRequest(entity.id))).full_chat
+    except:
+        pass
     
-    # Multiple usernames (Telegram allows up to 2)
-    if hasattr(entity, 'usernames'):
+    # Account age
+    date_created = sg(entity, 'date')
+    if date_created:
         try:
-            info["usernames"] = [u.username for u in entity.usernames]
+            core["account_age_days"] = (datetime.now(date_created.tzinfo) - date_created).days
         except:
             pass
     
-    # ===== TYPE DETECTION =====
-    if isinstance(entity, types.User):
-        info["type"] = "user"
-    elif isinstance(entity, types.Channel):
-        info["type"] = "channel" if safe_get(entity, 'broadcast') else "supergroup"
-    elif isinstance(entity, types.Chat):
-        info["type"] = "group"
-    else:
-        info["type"] = "unknown"
+    # Photos
+    photo_data = await intel_photo_data(entity)
     
     # ============================================
-    # USER INFO
+    # BUILD INTEL
     # ============================================
-    if isinstance(entity, types.User):
-        info["first_name"] = safe_get(entity, 'first_name')
-        info["last_name"] = safe_get(entity, 'last_name')
-        info["full_name"] = f"{safe_get(entity, 'first_name', '')} {safe_get(entity, 'last_name', '')}".strip()
-        info["phone"] = safe_get(entity, 'phone')
-        info["is_bot"] = safe_get(entity, 'bot', False)
-        info["is_premium"] = safe_get(entity, 'premium', False)
-        info["is_verified"] = safe_get(entity, 'verified', False)
-        info["is_scam"] = safe_get(entity, 'scam', False)
-        info["is_fake"] = safe_get(entity, 'fake', False)
-        info["is_restricted"] = safe_get(entity, 'restricted', False)
-        info["is_deleted"] = safe_get(entity, 'deleted', False)
-        info["is_mutual_contact"] = safe_get(entity, 'mutual_contact', False)
-        info["status"] = str(type(entity.status).__name__) if hasattr(entity, 'status') else None
-        info["language_code"] = safe_get(entity, 'lang_code')
-        info["min"] = safe_get(entity, 'min', False)
-        info["support"] = safe_get(entity, 'support', False)
-        info["bot_info_version"] = safe_get(entity, 'bot_info_version')
+    intel = {
+        "status": "success",
+        "credit": "@BRONX_ULTRA",
+        "version": "4.0 Elite Intel",
+        "query": identifier,
+        "extracted_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         
-        # ===== PROFILE PHOTO =====
-        try:
-            photos = await client.get_profile_photos(entity, limit=1)
-            info["has_photo"] = len(photos) > 0
-            info["photo_count"] = len(await client.get_profile_photos(entity, limit=0))
-        except:
-            info["has_photo"] = False
-            info["photo_count"] = 0
+        # ===== CORE IDENTITY =====
+        "identity": {
+            "chat_id": entity.id,
+            "access_hash": sg(entity, 'access_hash'),
+            "type": core["type"],
+            "username": sg(entity, 'username'),
+            "all_usernames": [u.username for u in sg(entity, 'usernames', [])] if hasattr(entity, 'usernames') else [],
+            "first_name": sg(entity, 'first_name'),
+            "last_name": sg(entity, 'last_name'),
+            "full_name": f"{sg(entity, 'first_name', '')} {sg(entity, 'last_name', '')}".strip() or None,
+            "title": sg(entity, 'title'),
+            "phone": sg(entity, 'phone'),
+            "language": sg(entity, 'lang_code'),
+        },
         
-        # ===== FULL USER INFO =====
-        try:
-            full = await client(GetFullUserRequest(entity))
-            full_user = full.full_user
-            
-            info["about"] = safe_get(full_user, 'about', '')
-            info["common_chats_count"] = safe_get(full_user, 'common_chats_count', 0)
-            info["blocked"] = safe_get(full_user, 'blocked', False)
-            info["phone_calls_available"] = safe_get(full_user, 'phone_calls_available', False)
-            info["phone_calls_private"] = safe_get(full_user, 'phone_calls_private', False)
-            info["can_pin_message"] = safe_get(full_user, 'can_pin_message', False)
-            info["has_scheduled"] = safe_get(full_user, 'has_scheduled', False)
-            info["video_calls_available"] = safe_get(full_user, 'video_calls_available', False)
-            info["voice_messages_forbidden"] = safe_get(full_user, 'voice_messages_forbidden', False)
-            info["ttl_period"] = safe_get(full_user, 'ttl_period')
-            info["theme_emoticon"] = safe_get(full_user, 'theme_emoticon')
-            info["private_forward_name"] = safe_get(full_user, 'private_forward_name')
-            
-            # Bot info
-            bot_info = safe_get(full_user, 'bot_info')
-            if bot_info:
-                info["bot_description"] = safe_get(bot_info, 'description')
-                info["bot_commands"] = [
-                    {"command": c.command, "description": c.description}
-                    for c in safe_get(bot_info, 'commands', [])
-                ]
-            
-            # Personal channel
-            personal_chat = safe_get(full_user, 'personal_chat')
-            if personal_chat:
-                info["personal_channel"] = {
-                    "id": personal_chat.id,
-                    "title": safe_get(personal_chat, 'title'),
-                    "username": safe_get(personal_chat, 'username')
-                }
-        except Exception as e:
-            info["full_info_error"] = str(e)
+        # ===== ONLINE ACTIVITY =====
+        "online_status": intel_online_status(entity),
+        
+        # ===== PHOTO =====
+        "photo": photo_data,
+        
+        # ===== BIO =====
+        "bio": core["bio"] or None,
+        "bio_length": len(core["bio"]) if core["bio"] else 0,
+        
+        # ===== ACCOUNT NATURE =====
+        "account": intel_account_type(entity, {}),
+        
+        # ===== CHANNEL/GROUP SPECIFIC =====
+        "channel_data": None,
+        
+        # ===== RESTRICTIONS =====
+        "restrictions": intel_restrictions(entity),
+        
+        # ===== RELATED =====
+        "related": {
+            "common_chats": core["common_chats"],
+            "personal_channel": None,
+            "linked_chat_id": sg(entity, 'linked_chat_id') or sg(full_entity, 'linked_chat_id') if full_entity else None
+        },
+        
+        # ===== ANALYSIS =====
+        "identity_strength": None,
+        "trust_score": None,
+        "activity_pattern": None,
+        "quality": None,
+        
+        # ===== EXTRA =====
+        "proxy_pool": len(proxy_pool),
+        "cached": False,
+    }
+    
+    # Personal channel
+    if is_user and full_entity:
+        pc = sg(full_entity, 'personal_chat')
+        if pc:
+            intel["related"]["personal_channel"] = {
+                "id": pc.id,
+                "username": sg(pc, 'username'),
+                "title": sg(pc, 'title')
+            }
+    
+    # Channel/Group specific
+    if is_channel or is_group:
+        ch_data = {
+            "created": fmt_date(date_created),
+            "verified": sg(entity, 'verified', False),
+            "members": sg(full_entity, 'participants_count') if full_entity else sg(entity, 'participants_count'),
+            "online": sg(full_entity, 'online_count') if full_entity else None,
+            "admins": sg(full_entity, 'admins_count') if full_entity else None,
+            "banned": sg(full_entity, 'banned_count') if full_entity else None,
+            "is_megagroup": sg(entity, 'megagroup', False),
+            "is_broadcast": sg(entity, 'broadcast', False),
+            "is_gigagroup": sg(entity, 'gigagroup', False),
+            "signatures_enabled": sg(entity, 'signatures', False),
+            "antispam": sg(entity, 'antispam', False),
+            "pinned_message_id": sg(full_entity, 'pinned_msg_id') if full_entity else None,
+            "reactions_count": len(sg(full_entity, 'available_reactions', []) or []) if full_entity else 0,
+        }
+        intel["channel_data"] = ch_data
+        
+        # Admins
+        admins = await intel_admins(entity, limit=15)
+        if admins:
+            intel["admins"] = admins
+    
+    # User specific extras
+    if is_user and full_entity:
+        intel["user_settings"] = {
+            "blocked": sg(full_entity, 'blocked', False),
+            "blocked_stories": sg(full_entity, 'blocked_my_stories', False),
+            "phone_calls": sg(full_entity, 'phone_calls_available', False),
+            "video_calls": sg(full_entity, 'video_calls_available', False),
+            "voice_messages_forbidden": sg(full_entity, 'voice_messages_forbidden', False),
+            "ttl_period": sg(full_entity, 'ttl_period', 0),
+            "theme_emoji": sg(full_entity, 'theme_emoticon'),
+            "private_forward_name": sg(full_entity, 'private_forward_name'),
+        }
+        
+        # Bot info
+        bot = sg(full_entity, 'bot_info')
+        if bot:
+            intel["bot_info"] = {
+                "description": sg(bot, 'description'),
+                "commands_count": len(sg(bot, 'commands', []) or []),
+                "commands": [
+                    {"cmd": c.command, "desc": c.description}
+                    for c in (sg(bot, 'commands', []) or [])[:10]
+                ],
+                "privacy_policy": sg(bot, 'privacy_policy_url')
+            }
     
     # ============================================
-    # CHANNEL / GROUP INFO
+    # RUN ANALYZERS
     # ============================================
-    elif isinstance(entity, (types.Channel, types.Chat)):
-        info["title"] = safe_get(entity, 'title')
-        info["is_verified"] = safe_get(entity, 'verified', False)
-        info["is_scam"] = safe_get(entity, 'scam', False)
-        info["is_fake"] = safe_get(entity, 'fake', False)
-        info["is_restricted"] = safe_get(entity, 'restricted', False)
-        info["date_created"] = format_date(safe_get(entity, 'date'))
-        info["creator"] = safe_get(entity, 'creator', False)
-        info["left"] = safe_get(entity, 'left', False)
-        info["megagroup"] = safe_get(entity, 'megagroup', False)
-        info["broadcast"] = safe_get(entity, 'broadcast', False)
-        info["gigagroup"] = safe_get(entity, 'gigagroup', False)
-        info["slowmode_enabled"] = safe_get(entity, 'slowmode_enabled', False)
-        info["join_to_send"] = safe_get(entity, 'join_to_send', False)
-        info["join_request"] = safe_get(entity, 'join_request', False)
-        info["signatures"] = safe_get(entity, 'signatures', False)
-        info["pre_history_hidden"] = safe_get(entity, 'pre_history_hidden', False)
-        info["restricted"] = safe_get(entity, 'restricted', False)
-        info["participants_hidden"] = safe_get(entity, 'participants_hidden', False)
-        info["noforwards"] = safe_get(entity, 'noforwards', False)
-        info["default_banned_rights"] = str(safe_get(entity, 'default_banned_rights'))
-        info["has_link"] = safe_get(entity, 'has_link', False)
-        info["has_geo"] = safe_get(entity, 'has_geo', False)
-        
-        # ===== FULL CHANNEL INFO =====
-        try:
-            if isinstance(entity, types.Channel):
-                full = await client(GetFullChannelRequest(entity))
-                full_chat = full.full_chat
-            else:
-                full = await client(GetFullChatRequest(entity.id))
-                full_chat = full.full_chat
-            
-            info["about"] = safe_get(full_chat, 'about', '')
-            info["participants_count"] = safe_get(full_chat, 'participants_count', 0)
-            info["admins_count"] = safe_get(full_chat, 'admins_count')
-            info["kicked_count"] = safe_get(full_chat, 'kicked_count')
-            info["banned_count"] = safe_get(full_chat, 'banned_count')
-            info["online_count"] = safe_get(full_chat, 'online_count')
-            info["read_inbox_max_id"] = safe_get(full_chat, 'read_inbox_max_id')
-            info["read_outbox_max_id"] = safe_get(full_chat, 'read_outbox_max_id')
-            info["unread_count"] = safe_get(full_chat, 'unread_count')
-            info["pinned_msg_id"] = safe_get(full_chat, 'pinned_msg_id')
-            info["folder_id"] = safe_get(full_chat, 'folder_id')
-            info["slowmode_seconds"] = safe_get(full_chat, 'slowmode_seconds')
-            info["ttl_period"] = safe_get(full_chat, 'ttl_period')
-            info["call"] = safe_get(full_chat, 'call') is not None
-            info["can_set_username"] = safe_get(full_chat, 'can_set_username', False)
-            info["can_view_participants"] = safe_get(full_chat, 'can_view_participants', False)
-            info["can_set_stickers"] = safe_get(full_chat, 'can_set_stickers', False)
-            info["hidden_prehistory"] = safe_get(full_chat, 'hidden_prehistory', False)
-            info["sticker_set_id"] = safe_get(full_chat, 'stickerset')
-            info["available_reactions"] = safe_get(full_chat, 'available_reactions')
-            
-            # Linked chat
-            linked = safe_get(full_chat, 'linked_chat_id')
-            if linked:
-                info["linked_chat_id"] = linked
-            
-            # Bot info
-            bot_info = safe_get(full_chat, 'bot_info', [])
-            if bot_info:
-                info["bot_info"] = [
-                    {"user_id": b.user_id, "description": b.description}
-                    for b in bot_info
-                ]
-        except Exception as e:
-            info["full_info_error"] = str(e)
-        
-        # ===== GET OWNER/CREATOR =====
-        try:
-            if isinstance(entity, types.Channel):
-                admins = await client.get_participants(entity, filter=types.ChannelParticipantsAdmins, limit=5)
-                info["admins_list"] = [
-                    {
-                        "id": a.id,
-                        "username": safe_get(a, 'username'),
-                        "first_name": safe_get(a, 'first_name'),
-                        "is_bot": safe_get(a, 'bot', False)
-                    }
-                    for a in admins
-                ]
-        except:
-            pass
-        
-        # ===== PROFILE PHOTO =====
-        try:
-            photos = await client.get_profile_photos(entity, limit=1)
-            info["has_photo"] = len(photos) > 0
-        except:
-            info["has_photo"] = False
+    intel["identity_strength"] = intel_identity_strength(entity, intel)
+    intel["trust_score"] = intel_trust_score(entity, intel)
+    intel["activity_pattern"] = intel_activity_pattern(entity, intel)
+    intel["quality"] = intel_quality_report(entity, intel)
     
-    # ============================================
-    # PROXY & CACHE INFO
-    # ============================================
-    info["proxy_pool_size"] = len(proxy_pool)
-    info["cached"] = False
-    
-    return info
+    return intel
+
 
 # ============================================
 # ROUTES
 # ============================================
 @app.route('/')
 def home():
-    proxy_count = len(fetch_live_proxies())
     return f"""
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>BRONX ULTRA API v2.0</title>
-        <style>
-            body {{ background: #000; color: #0ff; font-family: monospace; text-align: center; padding: 30px; }}
-            code {{ background: #111; padding: 8px; color: #fa0; border-radius: 5px; display: block; margin: 10px auto; max-width: 700px; }}
-            .stat {{ color: #0f0; margin: 8px; }}
-            h1 {{ color: #f0f; text-shadow: 0 0 20px #f0f; }}
-            h3 {{ color: #ff0; }}
-            .box {{ border: 1px solid #0ff; padding: 20px; margin: 20px auto; max-width: 800px; border-radius: 10px; }}
-        </style>
-    </head>
+    <head><title>BRONX ULTRA v4.0</title>
+    <style>
+        body {{ background:#000; color:#0ff; font-family:monospace; text-align:center; padding:40px; }}
+        h1 {{ color:#f0f; text-shadow:0 0 20px #f0f; }}
+        code {{ background:#111; padding:10px; color:#fa0; border-radius:5px; display:block; margin:10px auto; max-width:600px; }}
+        .box {{ border:1px solid #0ff; padding:20px; margin:20px auto; max-width:700px; border-radius:10px; }}
+    </style></head>
     <body>
-        <h1>🚀 BRONX ULTRA API v2.0</h1>
-        <h3>🔥 20+ REAL INFO EXTRACTOR 🔥</h3>
+        <h1>💀 BRONX ULTRA v4.0</h1>
+        <h3>🎯 ELITE INTEL EDITION</h3>
         <div class="box">
-            <p class="stat">🛡️ Live Proxies: {proxy_count}</p>
-            <p class="stat">💾 Cache: 1 Hour</p>
-            <p class="stat">⚡ Unlimited Requests</p>
+            <p>🔍 Deep Intelligence • Trust Scoring • Quality Analysis</p>
+            <p>🛡️ Proxies: {len(proxy_pool)} | 💾 Cache: 30min</p>
         </div>
         <div class="box">
-            <h3>📌 ENDPOINTS</h3>
-            <code>GET /full-info?username=USERNAME</code>
+            <code>GET /intel?username=USERNAME</code>
             <code>GET /chatid?username=USERNAME</code>
-            <code>GET /proxies</code>
-            <code>GET /refresh-proxies</code>
-            <code>GET /clear-cache</code>
-            <code>GET /health</code>
         </div>
-        <p style="color:#f0f; margin-top:30px; font-size: 20px;">💀 @BRONX_ULTRA 💀</p>
-    </body>
-    </html>
+        <p style="color:#f0f;">@BRONX_ULTRA</p>
+    </body></html>
     """
 
-@app.route('/full-info')
-def full_info():
-    """Get 20+ real info about user/channel/group"""
-    identifier = request.args.get('username') or request.args.get('id') or request.args.get('query', '')
-    identifier = identifier.strip()
-    
+
+@app.route('/intel')
+def intel_endpoint():
+    """Elite intel endpoint"""
+    identifier = (request.args.get('username') or request.args.get('id') or request.args.get('query', '')).strip()
     if not identifier:
-        return jsonify({
-            "status": "error",
-            "message": "Missing 'username' or 'id' parameter",
-            "credit": "@BRONX_ULTRA"
-        }), 400
+        return jsonify({"status": "error", "message": "Missing 'username' or 'id'", "credit": "@BRONX_ULTRA"}), 400
     
-    cache_key = f"full:{identifier.lower()}"
-    cached = get_cached(cache_key)
-    if cached:
-        cached["cached"] = True
-        return jsonify(cached)
-    
-    async def get():
-        return await get_full_info(identifier)
+    key = f"intel:{identifier.lower()}"
+    c = get_cached(key)
+    if c:
+        c["cached"] = True
+        return jsonify(c)
     
     try:
-        result = loop.run_until_complete(get())
-        set_cached(cache_key, result)
+        result = loop.run_until_complete(extract_intel(identifier))
+        set_cached(key, result)
         return jsonify(result)
     except FloodWaitError as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Flood wait: {e.seconds}s",
-            "credit": "@BRONX_ULTRA"
-        }), 429
+        return jsonify({"status": "error", "message": f"Flood wait: {e.seconds}s", "credit": "@BRONX_ULTRA"}), 429
     except (UsernameInvalidError, UsernameNotOccupiedError):
-        return jsonify({
-            "status": "error",
-            "message": "Username invalid or not occupied",
-            "credit": "@BRONX_ULTRA"
-        }), 404
+        return jsonify({"status": "error", "message": "Username not found", "credit": "@BRONX_ULTRA"}), 404
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e),
-            "credit": "@BRONX_ULTRA"
-        }), 404
+        return jsonify({"status": "error", "message": str(e), "credit": "@BRONX_ULTRA"}), 404
+
 
 @app.route('/chatid')
 def chatid():
-    """Simple chat ID endpoint"""
-    username = request.args.get('username', '').strip()
-    if not username:
+    u = request.args.get('username', '').strip()
+    if not u:
         return jsonify({"status": "error", "message": "Missing username", "credit": "@BRONX_ULTRA"}), 400
-    
-    cache_key = f"chatid:{username.lower()}"
-    cached = get_cached(cache_key)
-    if cached:
-        cached["cached"] = True
-        return jsonify(cached)
-    
-    async def get():
-        e = await get_entity_with_retry(username)
-        result = {
+    try:
+        e = loop.run_until_complete(get_entity(u))
+        return jsonify({
             "status": "success",
             "chat_id": e.id,
-            "username": safe_get(e, 'username', username.replace('@', '')),
-            "credit": "@BRONX_ULTRA",
-            "cached": False,
-        }
-        if isinstance(e, types.User):
-            result["type"] = "user"
-            result["name"] = f"{safe_get(e, 'first_name', '')} {safe_get(e, 'last_name', '')}".strip()
-        else:
-            result["type"] = "channel" if safe_get(e, 'broadcast') else "group"
-            result["title"] = safe_get(e, 'title')
-        return result
-    
-    try:
-        result = loop.run_until_complete(get())
-        set_cached(cache_key, result)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e),
+            "username": sg(e, 'username', u.replace('@', '')),
+            "type": "user" if isinstance(e, types.User) else ("channel" if sg(e, 'broadcast') else "group"),
             "credit": "@BRONX_ULTRA"
-        }), 404
+        })
+    except Exception as ex:
+        return jsonify({"status": "error", "message": str(ex), "credit": "@BRONX_ULTRA"}), 404
 
-@app.route('/proxies')
-def list_proxies():
-    proxies = fetch_live_proxies()
-    return jsonify({
-        "status": "success",
-        "total_proxies": len(proxies),
-        "proxies": proxies[:20],
-        "credit": "@BRONX_ULTRA"
-    })
 
-@app.route('/refresh-proxies')
-def refresh_proxies():
-    global proxy_last_fetch
-    proxy_last_fetch = 0
-    proxies = fetch_live_proxies()
-    return jsonify({
-        "status": "success",
-        "total_proxies": len(proxies),
-        "message": "Proxy pool refreshed",
-        "credit": "@BRONX_ULTRA"
-    })
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok", "cached": len(cache), "proxies": len(proxy_pool), "version": "4.0", "credit": "@BRONX_ULTRA"})
+
 
 @app.route('/clear-cache')
 def clear_cache():
     cache.clear()
-    return jsonify({
-        "status": "success",
-        "message": "Cache cleared",
-        "credit": "@BRONX_ULTRA"
-    })
+    return jsonify({"status": "success", "message": "Cleared", "credit": "@BRONX_ULTRA"})
 
-@app.route('/health')
-def health():
-    return jsonify({
-        "status": "ok",
-        "cached_entries": len(cache),
-        "proxies": len(proxy_pool),
-        "credit": "@BRONX_ULTRA"
-    })
 
 # ============================================
 # MAIN
 # ============================================
 if __name__ == "__main__":
-    fetch_live_proxies()
+    fetch_proxies()
     
     async def init():
         await client.connect()
         if await client.is_user_authorized():
-            print("✅ BRONX ULTRA API v2.0 - RUNNING")
-            print(f"🛡️ Proxies loaded: {len(proxy_pool)}")
-            print("🔥 20+ Real Info Extractor Ready!")
+            print("✅ BRONX ULTRA v4.0 - ELITE INTEL READY")
+            print(f"🛡️ Proxies: {len(proxy_pool)}")
         else:
-            print("⚠️ Client not authorized!")
+            print("⚠️ Not authorized")
     
     try:
         loop.run_until_complete(init())
     except Exception as e:
-        print(f"Init error: {e}")
+        print(f"Init: {e}")
     
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)

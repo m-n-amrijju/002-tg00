@@ -18,10 +18,9 @@ app = Flask(__name__)
 # ============================================
 # CONFIG
 # ============================================
-API_ID = int(os.environ.get('API_ID', '36879101'))
-API_HASH = os.environ.get('API_HASH', '45360a236343352099ffa29570f486000')
-SESSION_STRING = os.environ.get('SESSION_STRING', '800sOMQBu8B5k-vpEYTBDBxXX20SdK8kApAbT08lt4vzuQIIqsycH00oxKNPZGOc7HcAje_4qUF5Kk6FQ0JGMqjH9LdThnlXrVwxO98Z7gjM0w874HVa6U3Y8LCBLu2SpbifYQ7K4MIe3Li-BVtcQr9YNRJTkW12WWOuetNloXWIiAq51TOn3kTADJM_59k8E2bCO2i_nYxGKFfjzS7zm36s0pxckPdXBqft69GrTRXkkFuwabix3LSmYjoc0HB9_Zsuzxp0qwkZViMFCay68tdxFS57peSLSXnCSXpiwkjXAtc3dNnPJUqyYqC2khHdrqVz9HiWRCoUf5Zu6IcFedVS1BWaMC4=')
-
+API_ID = int(os.environ.get('API_ID', '36879151'))
+API_HASH = os.environ.get('API_HASH', '45360a236343352099ffa29570f48700')
+SESSION_STRING = os.environ.get('SESSION_STRING', '1BVtsOMQBu8B5k-vpEYTBDBxXX20SdK8kApAbT08lt4vzuQIIqsycH00oxKNPZGOc7HcAje_4qUF5Kk6FQ0JGMqjH9LdThnlXrVwxO98Z7gjM0w874HVa6U3Y8LCBLu2SpbifYQ7K4MIe3Li-BVtcQr9YNRJTkW12WWOuetNloXWIiAq51TOn3kTADJM_59k8E2bCO2i_nYxGKFfjzS7zm36s0pxckPdXBqft69GrTRXkkFuwabix3LSmYjoc0HB9_Zsuzxp0qwkZViMFCay68tdxFS57peSLSXnCSXpiwkjXAtc3dNnPJUqyYqC2khHdrqVz9HiWRCoUf5Zu6IcFedVS1BWaMC4=')
 # ============================================
 # PROXY
 # ============================================
